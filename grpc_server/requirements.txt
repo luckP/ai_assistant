@@ -1,0 +1,14 @@
+asgiref==3.8.1
+Django==4.1.5
+django-environ==0.11.2
+grpcio==1.68.1
+grpcio-tools==1.68.1
+numpy==2.2.0
+protobuf==5.29.2
+psycopg2==2.9.10
+pydub==0.25.1
+scipy==1.14.1
+setuptools==75.6.0
+SpeechRecognition==3.12.0
+sqlparse==0.5.3
+typing_extensions==4.12.2

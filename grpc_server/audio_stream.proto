@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package audio;
+
+// gRPC service definition
+service AudioStream {
+    // Bidirectional streaming RPC for audio processing
+    rpc StreamAudio (stream AudioRequest) returns (stream AudioResponse);
+}
+
+// Message for audio chunks sent by the client
+message AudioRequest {
+    bytes audio_chunk = 1; // Audio data chunk
+}
+
+// Message for transcription or response sent by the server
+message AudioResponse {
+    string transcription = 1; // Transcribed text
+}

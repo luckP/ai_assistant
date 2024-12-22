@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+
+        .chat-container {
+            display: flex;
+            height: calc(100vh - 40px);
+            flex-direction: column;
+            margin: 20px auto;
+            padding: 20px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-logs {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            margin-bottom: 15px;
+        }
+
+        .chat-message {
+            margin-bottom: 10px;
+            display: flex;
+            align-items: flex-start;
+            width: 100%;
+            flex-direction: column;
+        }
+
+        .chat-message.user {
+            align-items: end;
+        }
+
+        .chat-message .message-content {
+            max-width: 70%;
+            padding: 10px;
+            border-radius: 8px;
+            word-wrap: break-word;
+        }
+
+        .chat-message.user .message-content {
+            background: #007BFF;
+            color: #fff;
+            text-align: right;
+        }
+
+        .chat-message.ai .message-content {
+            background: #e9ecef;
+            text-align: left;
+        }
+
+        .chat-message .timestamp {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .chat-input {
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+
+        .chat-input button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: #007BFF;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .chat-input button:hover {
+            background: #0056b3;
+        }
+
+        .alert {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>AI Chat Interface</h2>
+            <button id="clear-chat" class="btn btn-danger btn-sm">Clear Chat</button>
+        </div>
+        <div id="alert-box"></div>
+        <div class="chat-logs" id="chat-logs">
+            <!-- Chat logs will appear here -->
+        </div>
+        <form id="chat-form" class="chat-input">
+            <input type="text" id="user-input" placeholder="Ask a question..." required>
+            <button type="submit">Send</button>
+        </form>
+    </div>
+
+    <script>
+        const chatForm = document.getElementById('chat-form');
+        const chatLogs = document.getElementById('chat-logs');
+        const userInput = document.getElementById('user-input');
+        const clearChat = document.getElementById('clear-chat');
+        const alertBox = document.getElementById('alert-box');
+
+        let context = null;
+        let currentMessageDiv = null;
+        let currentMessage = '';
+
+        // Generate a random roomName
+        const roomName = `room_${Math.random().toString(36).substr(2, 8)}`;
+
+        // Establish WebSocket connection
+        const chatSocket = new WebSocket(`ws://${window.location.host}/ws/chat/${roomName}/`);
+
+        // Show alert
+        const showAlert = (message, type = 'danger') => {
+            alertBox.innerHTML = `<div class="alert alert-${type}" role="alert">${message}</div>`;
+            setTimeout(() => alertBox.innerHTML = '', 3000);
+        };
+
+        // Render Markdown message
+        const renderMarkdown = (text) => {
+            // Ensure `marked` outputs clean HTML without extra `<p>` wrapping
+            return marked.parse(text).trim();
+        };
+
+        // Render chat message
+        const renderMessage = (message, sender = 'ai', isStreaming = false) => {
+            
+            if (sender === 'ai') {
+                currentMessage += message;
+                // Update the current message during streaming
+                if (isStreaming && currentMessageDiv) {
+                    currentMessageDiv.querySelector('.message-content').innerHTML = renderMarkdown(currentMessage);
+                    chatLogs.scrollTop = chatLogs.scrollHeight; // Scroll to the latest message
+                    return;
+                }
+
+                // Finalize streaming message
+                if (!isStreaming && currentMessageDiv) {
+                    currentMessageDiv = null;
+                    return;
+                }
+
+                // Create a new message element for AI response
+                const messageLog = document.createElement('div');
+                messageLog.className = `chat-message ${sender}`;
+                messageLog.innerHTML = `
+                    <div class="message-content">${renderMarkdown(message)}</div>
+                    <div class="timestamp">${new Date().toLocaleTimeString()}</div>
+                `;
+                chatLogs.appendChild(messageLog);
+                chatLogs.scrollTop = chatLogs.scrollHeight; // Scroll to the latest message
+                currentMessageDiv = messageLog;
+            } else {
+                // Create user message
+                const messageLog = document.createElement('div');
+                messageLog.className = `chat-message ${sender}`;
+                messageLog.innerHTML = `
+                    <div class="message-content">${renderMarkdown(message)}</div>
+                    <div class="timestamp">${new Date().toLocaleTimeString()}</div>
+                `;
+                chatLogs.appendChild(messageLog);
+                chatLogs.scrollTop = chatLogs.scrollHeight; // Scroll to the latest message
+            }
+        };
+
+        // WebSocket event handlers
+        chatSocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.step) {
+                renderMessage(data.step, 'ai', !data.done);
+            }
+
+            if (data.done) {
+                context = data.context; // Save the updated context
+                currentMessageDiv = null; // Reset the current message div
+                currentMessage = '';
+            }
+
+            if (data.error) {
+                showAlert(data.error, 'danger');
+            }
+        };
+
+        chatSocket.onopen = () => {
+            showAlert('WebSocket connection established!', 'success');
+        };
+
+        chatSocket.onerror = () => {
+            showAlert('WebSocket connection error.', 'danger');
+        };
+
+        chatSocket.onclose = () => {
+            showAlert('WebSocket connection closed.', 'warning');
+        };
+
+        // Handle form submission
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const userMessage = userInput.value.trim();
+            if (!userMessage) return;
+
+            renderMessage(userMessage, 'user');
+            chatSocket.send(JSON.stringify({ message: userMessage, context }));
+            userInput.value = ''; // Clear input field
+        });
+
+        // Clear chat logs
+        clearChat.addEventListener('click', () => {
+            chatLogs.innerHTML = '';
+            context = null; // Reset context
+        });
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+</body>
+
+</html>

@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+  ai_assistant_app:
+    build:
+      context: ./django_app
+    container_name: ai_assistant_app
+    command: daphne -b 0.0.0.0 -p 8000 ai_assistant.asgi:application
+    volumes:
+      - ./django_app:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ai_assistant_db
+      - grpc_server
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=ai_assistant.settings
+      - DB_NAME=ai_assistant
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_HOST=ai_assistant_db
+      - DB_PORT=5432
+    networks:
+      - ai_assistant_network
+
+  ai_assistant_db:
+    image: postgres:13
+    container_name: ai_assistant_db
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=ai_assistant
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "6543:5432"
+    networks:
+      - ai_assistant_network
+
+  grpc_server:
+    build:
+      context: ./grpc_server
+    container_name: grpc_server
+    volumes:
+      - ./grpc_server:/app
+    ports:
+      - "50051:50051"
+    networks:
+      - ai_assistant_network
+
+networks:
+  ai_assistant_network:
+    driver: bridge
