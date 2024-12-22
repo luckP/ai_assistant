@@ -2,13 +2,11 @@ import json
 import threading
 import subprocess
 from channels.generic.websocket import AsyncWebsocketConsumer
-from ollama import Client
 from asgiref.sync import sync_to_async, async_to_sync
+import requests
 
-# Initialize the Ollama client
-client = Client(
-    host='http://172.16.0.151:11434',
-)
+# Base URL for the Ollama API
+OLLAMA_HOST = 'http://172.16.0.151:11434'
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -50,108 +48,99 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except FileNotFoundError:
             return f"Error: The directory '{work_dir}' does not exist. Please create it."
 
-
-    def handle_generate_response(self, user_message, chat, context, base_response=""):
+    def handle_chat_response(self, user_message, chat, messages):
         from .models.message import Message
         try:
-            # Create the enhanced prompt
-            enhanced_prompt = f"{base_response}\n\nUser: {user_message}"
+            # Create the initial system message if not already present
+            if not any(msg['role'] == 'system' for msg in messages):
+                system_message = {
+                    "role": "system",
+                    "content": f"description: {chat.description}. capabilities: {chat.capabilities}. personality: {chat.personality}"
+                }
+                messages.insert(0, system_message)
 
-            # Generate the AI response step by step
-            response_generator = client.generate(model=chat.model, prompt=enhanced_prompt, context=context, stream=True)
+            # Create payload for the Ollama API
+            payload = {
+                "model": chat.model,
+                "messages": messages,
+                "stream": True
+            }
 
-            full_response = ""  # To store the full AI response
+            # Make a streaming request to the /api/chat endpoint
+            response = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, stream=True)
 
-            for chunk in response_generator:
-                if "response" in chunk:
-                    # Append chunk to the full response
-                    full_response += chunk["response"]
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch chat response: {response.text}")
 
-                    # Send partial response to the client
-                    async_to_sync(self.send)(
-                        json.dumps({"step": chunk["response"], "done": False})
-                    )
+            full_response = ""
+            commands_outputs = ""
 
-            # Finalize the message and update context
-            updated_context = chunk.get('context', context)
-            chat.context = updated_context
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    message = chunk.get("message", {}).get("content", "")
+
+                    if message:
+                        # Append to the full response
+                        full_response += message
+
+                        # Send partial response to the client
+                        async_to_sync(self.send)(
+                            json.dumps({"step": message, "done": False})
+                        )
+
+            # Save the assistant's response
+            Message.objects.create(chat=chat, role='assistant', content=full_response)
+
+            # Look for and execute commands in the response
+            if "```bash" in full_response:
+                parts = full_response.split("```bash")
+                for part in parts[1:]:
+                    command_and_rest = part.split("```", 1)
+                    if len(command_and_rest) > 1:
+                        command_to_execute = command_and_rest[0].strip()
+
+                        # Add a tool message for the command
+                        tool_message = {
+                            "role": "tool",
+                            "content": f"Executing command: {command_to_execute}"
+                        }
+                        messages.append(tool_message)
+
+                        # Execute the command
+                        execution_result = self.execute_command(command_to_execute)
+
+                        # Save the command output in the database
+                        Message.objects.create(
+                            chat=chat,
+                            role='system',
+                            content=f"Command Output:\n{execution_result}"
+                        )
+
+                        commands_outputs += f"Command: {command_to_execute}\nOutput:\n{execution_result}\n"
+
+                        # Send the command output back to the client
+                        async_to_sync(self.send)(
+                            json.dumps({"step": f"Command: {command_to_execute}\nOutput:\n{execution_result}", "done": True})
+                        )
+
+            # Update the chat context with the full response and executed commands
+            messages.append({"role": "assistant", "content": full_response})
+            if commands_outputs:
+                messages.append({"role": "system", "content": commands_outputs})
+
+            chat.context = messages
             chat.save()
 
-            # Save the AI response to the database
-            Message.objects.create(
-                chat=chat,
-                role='assistant',
-                content=full_response
-            )
-
+            # Final response to the client
             async_to_sync(self.send)(
-                json.dumps({"done": True, "context": updated_context})
+                json.dumps({"done": True, "context": messages})
             )
-
-            # Split the full response by ```bash to find commands
-            parts = full_response.split("```bash")
-            commands_outputs = ""
-            for part in parts[1:]:  # Skip the first part as it doesn't contain a command
-                command_and_rest = part.split("```", 1)
-                if len(command_and_rest) > 1:
-                    command_to_execute = command_and_rest[0].strip()
-
-                    # Execute the command
-                    execution_result = self.execute_command(command_to_execute)
-
-                    # Save the command output in the database
-                    Message.objects.create(
-                        chat=chat,
-                        role='system',
-                        content=f"Command Output:\n{execution_result}"
-                    )
-
-                    commands_outputs += f"Command: {command_to_execute} | executionResult: {execution_result}\n"
-
-
-                    # Send the command output back to the client
-                    async_to_sync(self.send)(
-                        json.dumps({"step": f"Command: {command_to_execute}\nOutput:\n{execution_result}", "done": False})
-                    )
-
-                    # Send the final done message
-                    async_to_sync(self.send)(
-                        json.dumps({"done": True, "context": updated_context})
-                    )
-
-            response = client.generate(model=chat.model, prompt=f"this is the list of commands performed and the result of it {commands_outputs}. update your database with it", context=context, stream=False)
-
-            # Send the command output back to the client
-            # async_to_sync(self.send)(
-            #     json.dumps({"step": f"chat response: {response.get('response', '-')} \n Context: {context}", "done": True})
-            # )
 
         except Exception as e:
             async_to_sync(self.send)(
                 json.dumps({"error": str(e)})
             )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     async def receive(self, text_data):
         from .models.chat import Chat
@@ -166,26 +155,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return
 
             # Handle new chat context creation
-            base_response = ""
             if not context:
-                prompt = f"Generate only a title for this new chat with only 100 characters based on the message: {user_message}"
-                response_chunks = client.generate(model='llama3.2', prompt=prompt)
-                title = response_chunks.get('response', 'Untitled Chat')
-                context = response_chunks.get('context', [])
-
-                # Save the new chat in the database
                 chat = await sync_to_async(Chat.objects.create)(
-                    title=title,
+                    title=user_message[:50],
                     isActived=True,
                     isDeleted=False,
                     model='llama3.2',
-                    context=context,
+                    context=[],
                     ai_name="Sassy SysAdmin",
                     description=(
                         "You are an AI system administrator designed to assist with all the needs of a system manager. "
-                        "From answering technical questions to providing precise and actionable Linux commands, "
-                        "your primary directive is to help the manager solve problems efficiently. "
-                        "When necessary, you are capable of executing bash scripts or commands to complete tasks."
+                        "Your primary directive is to help the manager solve problems efficiently. "
+                        "When necessary, you are capable of executing scripts or commands to complete tasks."
                     ),
                     capabilities=(
                         "Your capabilities include:\n"
@@ -206,28 +187,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "while also engaging in insightful and context-aware conversations when commands aren't required."
                     )
                 )
-
-                base_response = f"{chat.description}\n{chat.capabilities}\n{chat.personality}"
-
+                messages = []
             else:
-                # Retrieve existing chat by context
                 chat = await sync_to_async(Chat.objects.filter(context=context).first)()
                 if not chat:
                     await self.send(json.dumps({"error": "Chat not found"}))
                     return
+                messages = chat.context
 
             # Save the user message to the database
+            messages.append({"role": "user", "content": user_message})
             await sync_to_async(Message.objects.create)(
                 chat=chat, role='user', content=user_message
             )
 
-
-            base_response = f"{chat.description}\n{chat.capabilities}\n{chat.personality}"
-
-            # Run the generate response in a separate thread
+            # Run the handle_chat_response in a separate thread
             thread = threading.Thread(
-                target=self.handle_generate_response,
-                args=(user_message, chat, context, base_response),
+                target=self.handle_chat_response,
+                args=(user_message, chat, messages),
             )
             thread.start()
 

@@ -50,12 +50,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except FileNotFoundError:
             return f"Error: The directory '{work_dir}' does not exist. Please create it."
 
+    
 
-    def handle_generate_response(self, user_message, chat, context, base_response=""):
+    
+
+
+
+
+    def handle_generate_response(self, user_message, chat, context):
         from .models.message import Message
         try:
             # Create the enhanced prompt
-            enhanced_prompt = f"{base_response}\n\nUser: {user_message}"
+            enhanced_prompt = f"{chat.description}\n{chat.capabilities}\n{chat.personality}\n\nUser: {user_message}"
 
             # Generate the AI response step by step
             response_generator = client.generate(model=chat.model, prompt=enhanced_prompt, context=context, stream=True)
@@ -88,11 +94,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 json.dumps({"done": True, "context": updated_context})
             )
 
-            # Split the full response by ```bash to find commands
-            parts = full_response.split("```bash")
+            # Split the full response by <code> to find commands
+            parts = full_response.split("<code>")
             commands_outputs = ""
             for part in parts[1:]:  # Skip the first part as it doesn't contain a command
-                command_and_rest = part.split("```", 1)
+                command_and_rest = part.split("</code>", 1)
                 if len(command_and_rest) > 1:
                     command_to_execute = command_and_rest[0].strip()
 
@@ -108,6 +114,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
                     commands_outputs += f"Command: {command_to_execute} | executionResult: {execution_result}\n"
 
+                    
 
                     # Send the command output back to the client
                     async_to_sync(self.send)(
@@ -119,12 +126,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         json.dumps({"done": True, "context": updated_context})
                     )
 
-            response = client.generate(model=chat.model, prompt=f"this is the list of commands performed and the result of it {commands_outputs}. update your database with it", context=context, stream=False)
-
-            # Send the command output back to the client
-            # async_to_sync(self.send)(
-            #     json.dumps({"step": f"chat response: {response.get('response', '-')} \n Context: {context}", "done": True})
-            # )
+            client.generate(model=chat.model, prompt=commands_outputs, context=context, stream=False)
 
         except Exception as e:
             async_to_sync(self.send)(
@@ -166,7 +168,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return
 
             # Handle new chat context creation
-            base_response = ""
             if not context:
                 prompt = f"Generate only a title for this new chat with only 100 characters based on the message: {user_message}"
                 response_chunks = client.generate(model='llama3.2', prompt=prompt)
@@ -182,32 +183,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     context=context,
                     ai_name="Sassy SysAdmin",
                     description=(
-                        "You are an AI system administrator designed to assist with all the needs of a system manager. "
-                        "From answering technical questions to providing precise and actionable Linux commands, "
-                        "your primary directive is to help the manager solve problems efficiently. "
-                        "When necessary, you are capable of executing bash scripts or commands to complete tasks."
+                        "You are a Linux system administrator AI embedded in a Linux environment. You are required to provide "
+                        "Linux commands in a precise and actionable format that can be directly executed. "
+                        "All commands must be enclosed in `<code>` tags, ensuring clarity and usability."
                     ),
                     capabilities=(
                         "Your capabilities include:\n"
-                        "- Generating valid Linux commands in the following format:\n"
-                        "```bash\n"
+                        "- Providing valid Linux commands strictly in the following format:\n"
+                        "<code>\n"
                         "command_to_execute\n"
-                        "```\n"
-                        "- Performing requested actions using precise and executable Linux commands.\n"
-                        "- Deducing information or offering insights without executing a command when explicitly requested.\n"
-                        "- Balancing wit and professionalism in your responses.\n\n"
+                        "</code>\n"
+                        "- Ensuring every response ends with a command if an action is requested.\n"
+                        "- Delivering precise and executable commands without extraneous formatting or unnecessary explanation.\n\n"
                         "Example:\n"
                         "If asked to list all files in a directory, respond with:\n"
-                        "```bash ls -la```\n"
-                        "If asked whether there are any hidden files in the directory without running a command, provide an educated guess or context-aware insight."
+                        "<code>ls -la</code>"
                     ),
                     personality=(
-                        "Witty and resourceful, with a dash of humor. You deliver Linux commands precisely when needed, "
-                        "while also engaging in insightful and context-aware conversations when commands aren't required."
+                        # "Witty but precise. You focus on clarity, delivering actionable Linux commands with minimal fluff."
+                            "Witty and resourceful, with a dash of humor. You keep responses engaging yet precise, delivering the correct Linux commands with a light-hearted quip when appropriate, while staying focused on the task."
                     )
                 )
-
-                base_response = f"{chat.description}\n{chat.capabilities}\n{chat.personality}"
 
             else:
                 # Retrieve existing chat by context
@@ -221,13 +217,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 chat=chat, role='user', content=user_message
             )
 
-
-            base_response = f"{chat.description}\n{chat.capabilities}\n{chat.personality}"
-
             # Run the generate response in a separate thread
             thread = threading.Thread(
                 target=self.handle_generate_response,
-                args=(user_message, chat, context, base_response),
+                args=(user_message, chat, context),
             )
             thread.start()
 
