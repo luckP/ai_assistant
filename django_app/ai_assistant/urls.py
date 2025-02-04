@@ -15,8 +15,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from django.conf.urls.static import static
+from django.conf import settings
 from .views import index
 from . import views
+
 
 
 
@@ -25,4 +28,4 @@ urlpatterns = [
     path('ai_assistent/', index, name='index'),
     path('chat/', views.chat_view, name='chat'),
     path('api/chat', views.chat_view, name='api_chat'),
-]
+]+ static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

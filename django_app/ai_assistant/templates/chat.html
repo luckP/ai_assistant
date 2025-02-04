@@ -36,6 +36,10 @@
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             transition: background-color 0.3s, box-shadow 0.3s;
+            white-space: pre-wrap; /* Preserve whitespace and wrap lines */
+            word-wrap: break-word; /* Break long words to prevent overflow */
+            overflow-wrap: break-word; /* Handle word wrapping in modern browsers */
+            font-family: monospace; /* Optional: Use monospace for better alignment */
         }
 
         body.dark .chat-container {
@@ -268,6 +272,7 @@
             }
 
             if (data.error) {
+                console.error(data.error);
                 showAlert(data.error, 'danger');
             }
         };

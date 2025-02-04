@@ -16,6 +16,9 @@ COPY . .
 # Set environment variable for Django settings
 ENV DJANGO_SETTINGS_MODULE=ai_assistant.settings
 
+# Add PYTHONPATH to the Dockerfile
+ENV PYTHONPATH=/app
+
 # Expose the port the app runs on
 EXPOSE 8000
 

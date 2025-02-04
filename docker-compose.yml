@@ -21,6 +21,7 @@ services:
       - DB_PASSWORD=password
       - DB_HOST=ai_assistant_db
       - DB_PORT=5432
+      - PYTHONPATH=/app
     networks:
       - ai_assistant_network
 

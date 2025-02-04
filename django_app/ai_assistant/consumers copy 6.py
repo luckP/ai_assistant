@@ -8,6 +8,7 @@ from asgiref.sync import sync_to_async, async_to_sync
 # Initialize the Ollama client
 client = Client(
     host='http://172.16.0.151:11434',
+    # host='http://192.168.10.211:11434',
 )
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -51,12 +52,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return f"Error: The directory '{work_dir}' does not exist. Please create it."
 
     
-
-    
-
-
-
-
     def handle_generate_response(self, user_message, chat, context):
         from .models.message import Message
         try:
@@ -115,22 +110,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     commands_outputs += f"Command: {command_to_execute} | executionResult: {execution_result}\n"
 
                     
-
                     # Send the command output back to the client
                     async_to_sync(self.send)(
-                        json.dumps({"step": f"Command: {command_to_execute}\nOutput:\n{execution_result}", "done": False})
+                        json.dumps({"step": f"Command: {command_to_execute}\nOutput:\n{execution_result}", "done": True})
                     )
 
                     # Send the final done message
-                    async_to_sync(self.send)(
-                        json.dumps({"done": True, "context": updated_context})
-                    )
+                    # async_to_sync(self.send)(
+                    #     json.dumps({"done": True, "context": updated_context})
+                    # )
 
             response = client.generate(model=chat.model, prompt=commands_outputs, context=updated_context, stream=False)
             updated_context = response.get('context', context)
             chat.context = updated_context
             chat.save()
-            
+
             async_to_sync(self.send)(
                 json.dumps({"done": True, "context": updated_context})
             )
@@ -179,7 +173,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             # Handle new chat context creation
             if not context:
                 prompt = f"Generate only a title for this new chat with only 100 characters based on the message: {user_message}"
-                response_chunks = client.generate(model='llama3.2', prompt=prompt)
+                # response_chunks = client.generate(model='llama3.2', prompt=prompt)
+                response_chunks = client.generate(model='llama3.2-4k', prompt=prompt)
                 title = response_chunks.get('response', 'Untitled Chat')
                 context = response_chunks.get('context', [])
 
